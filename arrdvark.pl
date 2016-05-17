@@ -11,6 +11,7 @@
 #  2016/04/09	njeffrey	add error checks
 #  2016/04/10	njeffrey	export RRD values to CSV files for graphing with javascript based dygraphs from www.dygraphs.com
 #  2016/04/14	njeffrey	add --rrdinfo and --xmldump parameters
+#  2016/05/17	njeffrey	add "use POSIX" to validate operating system is AIX
 
 
 
@@ -20,22 +21,34 @@
 # -----------------
 # only recreate daily graphs every 4 hours, weekly graphs every day, etc
 # add subroutine get_filesystem_usage to create RRD files for any and all filesystems 
+# document how to install the RRD::Editor perl module
+# write README.txt explaining how to use
+# write INSTALL.txt explaining how to install
+# add httpd.pl as a dependency
+# write install.sh script
+# get_disk_latency subroutine is not yet saving to an RRD file - need to figure out how to create RRD if disk names may change over time
+# instead of calling vmstat/iostat/lsps, see if you can pull all of this data out of an nmon file that is constantly running
+
+
 
 
 # NOTES
 # ------
-# It is assumed that this script is run every 5 minutes from cron
+# It is assumed that this script is run every 5 minutes from cron by the arrdvark user.  Example:
+#   0,5,10,15,20,25,30,35,40,45,50,55 * * * * /usr/local/arrdvark/arrdvark.pl >/dev/null 2>&1  #generate RRD performance metrics
+#
 # This script will keep 1 year of CSV data, and automatically truncate data older than 1 year.
 
 
 
 use strict;						#enforce good coding practices
 use Getopt::Long;                                       #allow --long-switches to be used as parameters
+use POSIX; 						#core perl module that emulates uname command
 use RRD::Editor ();					#use external perl module (see readme for install instructions)
 
 
 #declare variables
-my ($cmd,$vmstat,$lsps,$uname,$rrd);
+my ($cmd,$vmstat,$lsps,$iostat,$rrd);
 my ($memTotal,$memComp,$memNoncomp,$memFree);
 my ($pagespaceTotal,$pagespaceUsed,$pagingIn,$pagingOut);
 my ($cpuSys,$cpuUser,$cpuIdle,$cpuWait,$cpuPhysical,$cpuEntitled,$cpuEntitled_pct);
@@ -45,14 +58,15 @@ my ($common_switches);
 my ($black,$white,$red,$orange,$green,$blue,$purple,$yellow);
 my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst,$seconds_since_epoch,$i);
 my ($key,%csvdata,$fileext);
+my (%disks,$hdisk,$iops,$read_latency,$write_latency);
 my ($start,$end,$resolution);
 $vmstat      = "/usr/bin/vmstat";
 $lsps        = "/usr/sbin/lsps";
-$uname       = "/usr/bin/uname";
+$iostat      = "/usr/bin/iostat";
 $output_file = "/usr/local/arrdvark/arrdvark";
 $output_dir  = "/usr/local/arrdvark";
-$version     = "20160409";				#last update to script in yyyymmdd format
-$i           = ""; 					#counter variable in for loops
+$version     = "20160517";				#last update to script in yyyymmdd format
+$i           = ""; 					#counter variable used in for loops
 
 
 
@@ -153,20 +167,16 @@ sub sanity_checks {
    $_ = $lsps; 
    if ( ! -e $_ ) { print "Error - $_ does not exist                       \n"; exit; }
    if ( ! -x $_ ) { print "Error - $_ is not executable by the current user\n"; exit; }
-   $_ = $uname; 
+   $_ = $iostat; 
    if ( ! -e $_ ) { print "Error - $_ does not exist                       \n"; exit; }
    if ( ! -x $_ ) { print "Error - $_ is not executable by the current user\n"; exit; }
    #
-   #confirm system is running AIX
-   $cmd = "$uname";
-   open(IN,"$cmd|");                                    #open a filehandle using command output
-   while (<IN>) {                                       #read a line from STDIN
-      unless ( /AIX/ ) {                                #confirm system is running AIX
-         print "ERROR: this script only runs on AIX \n";
-         exit;
-      }                                                 #end of unless block
-   }                                                    #end of while loop
-   close IN;                                            #close filehandle
+   # confirm system is running AIX
+   my ($sysname, $nodename, $release, $version, $machine) = POSIX::uname();
+   unless ( $sysname =~ /AIX/) {
+      print "ERROR: This script only runs on AIX.  Current system is $sysname \n";
+      exit;
+   } 							#end of unless block
 } 							#end of subroutine
 
 
@@ -195,11 +205,9 @@ sub get_date {
 
 
 
-
-
-sub get_perfdata {
+sub get_memory_util {
    #
-   print "running get_perfdata subroutine \n" if ($verbose eq "yes");
+   print "running get_memory_util subroutine \n" if ($verbose eq "yes");
    #
    #
    # Initialize variables so we can perform addition/division for averaging
@@ -207,17 +215,6 @@ sub get_perfdata {
    $memFree         = 0;
    $memComp         = 0;
    $memNoncomp      = 0;
-   $pagespaceTotal  = 0;
-   $pagespaceUsed   = 0;
-   $pagingIn        = 0;
-   $pagingOut       = 0;
-   $cpuUser         = 0;
-   $cpuSys          = 0;
-   $cpuIdle         = 0;
-   $cpuWait         = 0;
-   $cpuPhysical     = 0;
-   $cpuEntitled     = 0;
-   $cpuEntitled_pct = 0;
    #
    #
    # Get physical memory utilization
@@ -251,6 +248,21 @@ sub get_perfdata {
    print "   Total memory:$memTotal, Free memory:$memFree, Computational Memory:$memComp, Filesystem Cache:$memNoncomp \n" if ($verbose eq "yes");
    #
    #
+
+}                                                       #end of subroutine
+
+
+
+
+sub get_pagingspace_util {
+   #
+   print "running get_pagingspace_util subroutine \n" if ($verbose eq "yes");
+   #
+   #
+   # Initialize variables so we can perform addition/division for averaging
+   $pagespaceTotal  = 0;
+   $pagespaceUsed   = 0;
+   #
    # Get paging space utilization
    #
    # You will get command output similar to the following:
@@ -271,6 +283,28 @@ sub get_perfdata {
    }                                                    		#end of while loop
    close IN;                                            		#close filehandle
    print "   Total paging space:$pagespaceTotal bytes, Used:$pagespaceUsed bytes\n" if ($verbose eq "yes");
+}                                                       #end of subroutine
+
+
+
+
+
+
+sub get_cpu_and_paging {
+   #
+   print "running get_cpu_and_paging subroutine \n" if ($verbose eq "yes");
+   #
+   #
+   # Initialize variables so we can perform addition/division for averaging
+   $pagingIn        = 0;
+   $pagingOut       = 0;
+   $cpuUser         = 0;
+   $cpuSys          = 0;
+   $cpuIdle         = 0;
+   $cpuWait         = 0;
+   $cpuPhysical     = 0;
+   $cpuEntitled     = 0;
+   $cpuEntitled_pct = 0;
    #
    #
    # Get paging in/out activity and CPU utilization from vmstat (same command gives us a two-for-one)
@@ -362,6 +396,120 @@ sub get_perfdata {
 
 
 
+sub get_disk_latency {
+   #
+   print "running get_disk_latency subroutine \n" if ($verbose eq "yes");
+   #
+   #
+   # You will get command output similar to the following:
+   #   iostat -DRTl 1 10
+   #
+   # Disks:                     xfers                                read                                write                                  queue                    time
+   # -------------- -------------------------------- ------------------------------------ ------------------------------------ -------------------------------------- ---------
+   #                  %tm    bps   tps  bread  bwrtn   rps    avg    min    max time fail   wps    avg    min    max time fail    avg    min    max   avg   avg  serv
+   #                  act                                    serv   serv   serv outs              serv   serv   serv outs        time   time   time  wqsz  sqsz qfull
+   #
+   # hdisk0           0.0   0.0    0.0   0.0    0.0    0.0   0.0    0.0    0.0     0    0   0.0   0.0    0.0    0.0     0    0   0.0    0.0    0.0    0.0   0.0   0.0  11:44:31
+   # hdisk1          60.0 169.1M 645.0 169.1M   0.0  645.0   0.9    0.7    1.5     0    0   0.0   0.0    0.0    0.0     0    0   0.0    0.0    0.0    0.0   0.0   0.0  11:44:31
+   #
+   # hdisk0           0.0   0.0    0.0   0.0    0.0    0.0   0.0    0.0    0.0     0    0   0.0   0.0    0.0    0.0     0    0   0.0    0.0    0.0    0.0   0.0   0.0  11:44:32
+   # hdisk1          79.0 164.1M 626.0 164.1M   0.0  626.0   1.3    0.7   34.0     0    0   0.0   0.0    0.0    0.0     0    0   0.0    0.0    0.0    0.0   0.0   0.0  11:44:32
+   #
+   # This is what each of the fields mean:
+   # %tm act:     percent of time the device was active (we can see if disk load is balanced correctly or not, 1 used heavily others not)
+   # bps:         amount of data transferred (read or written) per second (default is in bytes per second)
+   # tps:         number of transfers per second
+   #             (Transfer is an I/O request, and multiple logical requests can be combined into 1 I/O request with different size)
+   # bread:       amount of data read per second (default is in bytes per second)
+   # bwrtn:       amount of data written per second (default is in bytes per second)
+   # rps:         number of read transfers per second.
+   # avgserv:     average service time per read transfer (default is in milliseconds)
+   # minserv:     minimum service time per read transfer (default is in milliseconds)
+   # maxserv:     maximum service time per read transfer (default is in milliseconds)
+   # timeouts:    number of read/write timeouts per second
+   # fail:        number of failed read/write requests per second
+   # wps:         number of write transfers per second.
+   # avgserv:     average service time per write transfer (default is in milliseconds)
+   # minserv:     minimum service time per write transfer (default is in milliseconds)
+   # maxserv:     maximum service time per write transfer (default is in milliseconds)
+   # timeouts:    number of read/write timeouts per second
+   # fail:        number of failed read/write requests per second
+   # avgtime:     average time spent in the wait queue (waiting to get sent to the disk, the disk's queue is full) (default is in milliseconds)
+   # mintime:     minimum time spent in the wait queue (waiting to get sent to the disk, the disk's queue is full) (default is in milliseconds)
+   # maxtime:     maximum time spent in the wait queue (waiting to get sent to the disk, the disk's queue is full) (default is in milliseconds)
+   # avgwqsz:     average wait queue size (waiting to be sent to the disk)
+   # avgsqsz:     average service queue size (this can't exceed queue_depth for the disk)
+   # sqfull:      number of times the service queue becomes full per second (that is, the disk is not accepting any more service requests)
+   #
+   #
+   # 
+
+   #
+   $cmd = "$iostat -DRTl 1 10"; 					#command to be run
+   print "   running command: $cmd \n" if ($verbose eq "yes");
+   open(IN,"$cmd|");                                    		#open a filehandle using command output
+   while (<IN>) {                                       		#read a line from STDIN
+      if ( /^hdisk/ ) { 						#find the iostat output that begins with hdisk
+         s/ +/ /g; 							#collapse multiple spaces into a single space
+         ($hdisk, $iops, $read_latency, $write_latency) = (split / /, $_)[0,3,7,13];	#retrieve element 0,3,7,13 from split
+         print "   hdisk:$hdisk iops:$iops ReadLatency:$read_latency WriteLatency:$write_latency \n" if ($verbose eq "yes");
+         #
+         # initialize hash elements if required (so we can perform addition)
+         $disks{$hdisk}{hdisk}         = $hdisk;
+         $disks{$hdisk}{iops}          = 0 unless ( defined $disks{$hdisk}{iops}          );	
+         $disks{$hdisk}{read_latency}  = 0 unless ( defined $disks{$hdisk}{read_latency}  );	
+         $disks{$hdisk}{write_latency} = 0 unless ( defined $disks{$hdisk}{write_latency} );
+         #
+         # ensure consistent units are used (K=kilo M=mega G=giga S=seconds)
+         if ($iops =~ /K/) {						#check for units in Kilo
+            $iops =~ s/K//g;						#remove unit signifier
+            $iops = $iops * 1000;					#multiply to remove unit
+         }
+         if ($iops =~ /M/) {						#check for units in Mega
+            $iops =~ s/M//g;						#remove unit signifier
+            $iops = $iops * 1000 * 1000;				#multiply to remove unit
+         }
+         if ($iops =~ /G/) {						#check for units in Giga
+            $iops =~ s/G//g;						#remove unit signifier
+            $iops = $iops * 1000 * 1000 * 1000;				#multiply to remove unit
+         }
+         if ($read_latency =~ /S/) {					#check for units in seconds instead of milliseconds
+            $read_latency =~ s/S//g;					#remove unit signifier
+            $read_latency = $read_latency * 1000;			#multiply to remove unit
+         }
+         if ($write_latency =~ /S/) {					#check for units in seconds instead of milliseconds
+            $write_latency =~ s/S//g;					#remove unit signifier
+            $write_latency = $write_latency * 1000;			#multiply to remove unit
+         }
+         #
+         # save running totals 
+         $disks{$hdisk}{iops}          = $disks{$hdisk}{iops}          + $iops;		 
+         $disks{$hdisk}{read_latency}  = $disks{$hdisk}{read_latency}  + $read_latency;	 
+         $disks{$hdisk}{write_latency} = $disks{$hdisk}{write_latency} + $write_latency;	 
+      }                                                 		#end of if block
+   }                                                    		#end of while loop
+   close IN;                                            		#close filehandle
+   #
+   # calculate averages from running totals
+   foreach $key (sort keys %disks) {
+      if ($disks{$key}{iops} > 0) {							#avoid divide by zero errors
+         $disks{$key}{iops}          = $disks{$key}{iops} / 10;				#get average of 10 data points from iostat 
+         $disks{$key}{iops}          = sprintf( "%.0f", $disks{$key}{iops});   		#truncate to 0 decimal places
+      }
+      if ($disks{$key}{read_latency} > 0) {						#avoid divide by zero errors
+         $disks{$key}{read_latency}  = $disks{$key}{read_latency} / 10; 		#get average of 10 data points from iostat
+         $disks{$key}{read_latency}  = sprintf( "%.1f", $disks{$key}{read_latency});    #truncate to 0 decimal places
+      }
+      if ($disks{$key}{write_latency} > 0) {						#avoid divide by zero errors
+         $disks{$key}{write_latency} = $disks{$key}{write_latency} / 10; 		#get average of 10 data points from iostat
+         $disks{$key}{write_latency} = sprintf( "%.1f", $disks{$key}{write_latency});   #truncate to 0 decimal places
+      }
+      print "   $disks{$key}{hdisk} IOPS:$disks{$key}{iops}, ReadLatency:$disks{$key}{read_latency}, WriteLatency:$disks{$key}{write_latency} \n" if ($verbose eq "yes");
+   } 									# end of foreach block
+}                                                       #end of subroutine
+
+
+
 
 sub create_rrd {
    #
@@ -450,194 +598,6 @@ sub update_rrd {
 } 							#end of subroutine
 
 
-
-
-
-#sub save_perfdata_as_csv {
-#   #
-#   print "running save_perfdata_as_csv subroutine \n" if ($verbose eq "yes");
-#   #
-#   #
-#   if ( ! -e "$output_file.memory.csv" ) {		#file does not yet exist - create file
-#      print "   creating file $output_file.memory.csv \n" if ($verbose eq "yes");
-#      open (OUT,">$output_file.memory.csv") or die "Cannot open $output_file.memory.csv for writing $! \n";
-#      print OUT "seconds_since_epoch,memFree,memNoncomp,memComp\n";	#print header row
-#   } 							#end of if block
-#   close OUT; 						#close filehandle
-#   if ( ! -e "$output_file.memory.csv" ) {                     #warn if rrd file does not exist
-#      print "ERROR: Cannot create CSV file $output_file.memory.csv - check permissions \n";
-#      exit;                                             #exit script
-#   }                                                    #end of if block
-#   if ( ! -w "$output_file.memory.csv" ) {                     #warn if rrd file is not writeable by the current user
-#      print "ERROR: Cannot write to CSV file $output_file.memory.csv - please check file permissions. \n";
-#      print "       $output_file.memory.csv should be owned by arrdvark user. \n";
-#      exit;                                             #exit script
-#   }                                                    #end of if block
-#   if ( -e "$output_file.memory.csv" ) {			#file already exists, so append CSV data
-#      open (OUT,">>$output_file.memory.csv") or die "Cannot open $output_file.memory.csv for appending $! \n";
-#      print OUT "$seconds_since_epoch,$memFree,$memNoncomp,$memComp\n";		#print data
-#   } 							#end of if block
-#   close OUT;						#close filehandle
-#      
-#   
-#   #
-#   #
-#   #
-#   if ( ! -e "$output_file.cpu.csv" ) {		#file does not yet exist - create file
-#      print "   creating file $output_file.cpu.csv \n" if ($verbose eq "yes");
-#      open (OUT,">$output_file.cpu.csv") or die "Cannot open $output_file.cpu.csv for writing $! \n";
-#      print OUT "seconds_since_epoch,cpuWait,cpuIdle,cpuUser,cpuSys\n";		#print header row
-#   } 							#end of if block
-#   close OUT; 						#close filehandle
-#   if ( ! -e "$output_file.cpu.csv" ) {                 #warn if rrd file does not exist
-#      print "ERROR: Cannot create CSV file $output_file.cpu.csv - check permissions \n";
-#      exit;                                             #exit script
-#   }                                                    #end of if block
-#   if ( ! -w "$output_file.cpu.csv" ) {                     #warn if rrd file is not writeable by the current user
-#      print "ERROR: Cannot write to CSV file $output_file.cpu.csv - please check file permissions. \n";
-#      print "       $output_file.cpu.csv should be owned by arrdvark user. \n";
-#      exit;                                             #exit script
-#   }                                                    #end of if block
-#   if ( -e "$output_file.cpu.csv" ) {			#file already exists, so append CSV data
-#      open (OUT,">>$output_file.cpu.csv") or die "Cannot open $output_file.cpu.csv for appending $! \n";
-#      print OUT "$seconds_since_epoch,$cpuWait,$cpuIdle,$cpuUser,$cpuSys\n";	#print data
-#   } 							#end of if block
-#   close OUT;						#close filehandle
-#   #
-#   #
-#   #
-#   if ( ! -e "$output_file.pagingspace.csv" ) {		#file does not yet exist - create file
-#      print "   creating file $output_file.pagingspace.csv \n" if ($verbose eq "yes");
-#      open (OUT,">$output_file.pagingspace.csv") or die "Cannot open $output_file.pagingspace.csv for writing $! \n";
-#      print OUT "seconds_since_epoch,pagespaceTotal,pagespaceUsed\n";	 				#print header row
-#   } 							#end of if block
-#   close OUT; 						#close filehandle
-#   if ( ! -e "$output_file.pagingspace.csv" ) {                     #warn if rrd file does not exist
-#      print "ERROR: Cannot create CSV file $output_file.pagingspace.csv - check permissions \n";
-#      exit;                                             #exit script
-#   }                                                    #end of if block
-#   if ( ! -w "$output_file.pagingspace.csv" ) {                     #warn if rrd file is not writeable by the current user
-#      print "ERROR: Cannot write to CSV file $output_file.pagingspace.csv - please check file permissions. \n";
-#      print "       $output_file.pagingspace.csv should be owned by arrdvark user. \n";
-#      exit;                                             #exit script
-#   }                                                    #end of if block
-#   if ( -e "$output_file.pagingspace.csv" ) {			#file already exists, so append CSV data
-#      open (OUT,">>$output_file.pagingspace.csv") or die "Cannot open $output_file.pagingspace.csv for appending $! \n";
-#      print OUT "$seconds_since_epoch,$pagespaceTotal,$pagespaceUsed\n";	#print data
-#   } 							#end of if block
-#   close OUT;						#close filehandle
-#   #
-#   #
-#   #
-#   if ( ! -e "$output_file.pagingio.csv" ) {		#file does not yet exist - create file
-#      print "   creating file $output_file.pagingio.csv \n" if ($verbose eq "yes");
-#      open (OUT,">$output_file.pagingio.csv") or die "Cannot open $output_file.pagingio.csv for writing $! \n";
-#      print OUT "seconds_since_epoch,pagingIn,pagingOut\n";	 				#print header row
-#   } 							#end of if block
-#   close OUT; 						#close filehandle
-#   if ( ! -e "$output_file.pagingio.csv" ) {                     #warn if rrd file does not exist
-#      print "ERROR: Cannot create CSV file $output_file.pagingio.csv - check permissions \n";
-#      exit;                                             #exit script
-#   }                                                    #end of if block
-#   if ( ! -w "$output_file.pagingio.csv" ) {                     #warn if rrd file is not writeable by the current user
-#      print "ERROR: Cannot write to CSV file $output_file.pagingio.csv - please check file permissions. \n";
-#      print "       $output_file.pagingio.csv should be owned by arrdvark user. \n";
-#      exit;                                             #exit script
-#   }                                                    #end of if block
-#   if ( -e "$output_file.pagingio.csv" ) {			#file already exists, so append CSV data
-#      open (OUT,">>$output_file.pagingio.csv") or die "Cannot open $output_file.pagingio.csv for appending $! \n";
-#      print OUT "$seconds_since_epoch,$pagingIn,$pagingOut\n";	#print data
-#   } 							#end of if block
-#   close OUT;						#close filehandle
-#   #
-#   #
-#   #
-#   if ( ! -e "$output_file.physicalcpu.csv" ) {		#file does not yet exist - create file
-#      print "   creating file $output_file.physicalcpu.csv \n" if ($verbose eq "yes");
-#      open (OUT,">$output_file.physicalcpu.csv") or die "Cannot open $output_file.physicalcpu.csv for writing $! \n";
-#      print OUT "seconds_since_epoch,cpuPhysical,cpuEntitled\n";	 				#print header row
-#   } 							#end of if block
-#   close OUT; 						#close filehandle
-#   if ( ! -e "$output_file.physicalcpu.csv" ) {                     #warn if rrd file does not exist
-#      print "ERROR: Cannot create CSV file $output_file.physicalcpu.csv - check permissions \n";
-#      exit;                                             #exit script
-#   }                                                    #end of if block
-#   if ( ! -w "$output_file.physicalcpu.csv" ) {                     #warn if rrd file is not writeable by the current user
-#      print "ERROR: Cannot write to CSV file $output_file.physicalcpucsv - please check file permissions. \n";
-#      print "       $output_file.physicalcpu.csv should be owned by arrdvark user. \n";
-#      exit;                                             #exit script
-#   }                                                    #end of if block
-#   if ( -e "$output_file.physicalcpu.csv" ) {			#file already exists, so append CSV data
-#      open (OUT,">>$output_file.physicalcpu.csv") or die "Cannot open $output_file.physicalcpu.csv for appending $! \n";
-#      print OUT "$seconds_since_epoch,$cpuPhysical,$cpuEntitled\n";	 				#print data
-#   } 							#end of if block
-#   close OUT;						#close filehandle
-#} 							#end of subroutine
-
-
-#sub csv_rollups {
-#   #
-#   print "running csv_rollups subroutine \n" if ($verbose eq "yes");
-#   #
-#   # this subroutine takes the raw CSV data and averages the data points for the daily/weekly/monthly/yearly graphs
-#   #Assume that the graph is 800 pixels wide (800x600 is pretty much the smallest resolution you can expect to see)
-#   #We want to fit no more than 800 data points on a graph, so we will need to average some numbers
-#   #yearly  = 1 data point every 12 hours = 2 * 365       = 720 data points on 800 pixel graph
-#   #monthly = 1 data point  per hour * 24 hours * 31 days = 744 data points on 800 pixel graph
-#   #weekly =  4 data points per hour * 24 hours * 7  days = 672 data points on 800 pixel graph
-#   #daily  = 12 data points per hour * 24 hours * 1  days = 288 data points on 800 pixel graph (room for more!)
-#   #
-#   # get all the data into a hash for further manipulation
-#   # use seconds_since_epoch as the hash key
-#   my %hash;						#initialize
-#   $i = 0;						#initialize
-#   open (IN,"$output_file.memory.csv")  or die "Cannot open $output_file.memory.csv for reading $! \n"; 
-#   while (<IN>) {
-#      if (/([0-9]+),([0-9\.]+),([0-9\.]+),([0-9\.]+)/) {
-#         $i++;
-#         $hash{$i}{seconds_since_epoch}    = $1;
-#         $hash{$i}{memFree}    = $2;
-#         $hash{$i}{memNoncomp} = $3;
-#         $hash{$i}{memComp}    = $4;
-#      } 						#end of if block
-#   } 							#end of while loop
-#   close IN;						#close filehandle
-#   #
-#   # for the daily rollup, grab the last 288 data points (no averaging required)
-#   my $hash_count = keys %hash;				#figure out number of keys in hash
-#   $i = $hash_count - 288;				#start counting 288 entries before the end of the hash
-#   for ( $i = $hash_count-288  ; $i <= $hash_count ; $i++ ) {
-#      unless ($hash{$i}{seconds_since_epoch}) {		#confirm hash key 
-#         $hash{$i}{seconds_since_epoch} = 0;		#add empty value if historical data does not exist
-#         $hash{$i}{memFree} = 0;			#add empty value if historical data does not exist
-#         $hash{$i}{memNoncomp} = 0;			#add empty value if historical data does not exist
-#         $hash{$i}{memComp} = 0;			#add empty value if historical data does not exist
-#      } 						#end of unless block
-#      #print "$hash{$i}{seconds_since_epoch},$hash{$i}{memFree},$hash{$i}{memNoncomp},$hash{$i}{memComp}\n";
-#   } 							#end of for loop
-#   #
-#   # for the weekly rollup, grab the last 60/5*24*7=2016 data points, but average every 15 minutes (take average of every 3 data points)
-#   $hash_count = keys %hash;				#figure out number of keys in hash
-#   $i = $hash_count - 2016;				#start counting 2016 entries before the end of the hash
-#   my $average = 0;					#initialize
-#   for ( $i = $hash_count-2016  ; $i <= $hash_count ; $i++ ) {
-#      unless ($hash{$i}{seconds_since_epoch}) {		#confirm hash key 
-#         $hash{$i}{seconds_since_epoch} = 0;		#add empty value if historical data does not exist
-#         $hash{$i}{memFree} = 0;			#add empty value if historical data does not exist
-#         $hash{$i}{memNoncomp} = 0;			#add empty value if historical data does not exist
-#         $hash{$i}{memComp} = 0;			#add empty value if historical data does not exist
-#      } 						#end of unless block
-#      print "$hash{$i}{seconds_since_epoch},$hash{$i}{memFree},$hash{$i}{memNoncomp},$hash{$i}{memComp}\n";
-#      if ( ($i %3) != 0) {				#modulus calculation to see if hash key is divisible by 3 with no remainder
-#         $average = $average + $hash{$i}{memFree};	#add up rolling average
-#      } else {						#current hash key is evenly divisible by 3
-#         $average = $average / 3 ; 			#calculate average
-#         $hash{$i}{memFree_average} = $average;		#store in hash
-#         $average = 0;					#reset to zero for next iterations
-#         print "average $hash{$i}{memFree_average}\n" if ($verbose eq "yes");
-#      } 
-#   } 							#end of for loop
-#} 							#end of subroutine
 
 
 
@@ -915,11 +875,12 @@ sub create_yearly_csv {
 get_options;
 sanity_checks;
 get_date;
-get_perfdata;
+get_memory_util;
+get_pagingspace_util;
+get_cpu_and_paging;
+get_disk_latency;
 create_rrd;
 update_rrd;
-#save_perfdata_as_csv;
-#csv_rollups;
 create_daily_csv;
 create_weekly_csv;
 create_monthly_csv;
