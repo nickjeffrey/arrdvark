@@ -21,7 +21,7 @@
 # -----------------
 # only recreate daily graphs every 4 hours, weekly graphs every day, etc
 # add subroutine get_filesystem_usage to create RRD files for any and all filesystems 
-# document how to install the RRD::Editor perl module
+# document how to install the RRD::Editor perl module   perl -MCPAN -e 'install RRD::Editor'
 # write README.txt explaining how to use
 # write INSTALL.txt explaining how to install
 # add httpd.pl as a dependency
@@ -41,10 +41,17 @@
 
 
 
+# TROUBLESHOOTING
+# ---------------
+# If you get this error:  Can't locate RRD/Editor.pm
+# You will need to install the RRD::Editor per module with: perl -m CPAN "install RRD::Editor"
+
+
+
 use strict;						#enforce good coding practices
 use Getopt::Long;                                       #allow --long-switches to be used as parameters
 use POSIX; 						#core perl module that emulates uname command
-use RRD::Editor ();					#use external perl module (see readme for install instructions)
+use RRD::Editor ();					#use external perl module - install with: perl -m CPAN 'install RRD::Editor' 
 
 
 #declare variables
