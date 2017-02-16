@@ -1,0 +1,222 @@
+<html>
+<head>
+   <META HTTP-EQUIV="refresh" CONTENT="300">                                <!-- refresh the page every 5 minutes -->
+   <script type="text/javascript" src="dygraph-combined-dev.js"></script>   <!-- use javascript from www.dygraphs.com -->
+</head>
+<body>
+
+
+
+<!-- generate a graph for logical CPU utilization -->
+<hr>
+<table border=0>
+   <tr><td><div id="graphCPU">       </div>   <!-- div id values must be unique -->
+       <td><div id="graphCPU_legend"></div>   <!-- div id values must be unique -->
+   </tr>
+</table>
+<script type="text/javascript">
+   g2 = new Dygraph(
+      document.getElementById("graphCPU"),
+      "cpu-month.csv", 						// path to CSV file
+      {   							//graph options
+          title: "Logical CPU Utilization",			//graph title
+          ylabel: 'CPU %',					//y-axis label
+          xlabel: "x-axis label",                               //x-axis label 
+          width:800,        					//graph width in pixels
+          height:300,                                           //graph height in pixels
+          stackedGraph: true,                                   //stack values on the graph
+          colors:["red","green","orange","blue"],               //line colors on the graph
+          rollPeriod: 1,
+          valueRange: [0,100],      				//y-axis min-max values
+          //
+          // convert UNIX timestamp (seconds since epoch)
+          // to milliseconds since epoch (date format used by dygraphs)
+          xValueFormatter: Dygraph.dateString_,
+          xValueParser: function(x) { return 1000*parseInt(x); },
+          xTicker: Dygraph.dateTicker,
+          //
+          // Legend details
+          legend: "always",                                	//always display the legend
+          //labelsKMG: false,                              	//add KMG (base 10) to numbers
+          labelsKMG2: true,                                	//add KMB (base 2)  to numbers
+          labels:["date","Wait%","Idle%","User%","Sys%"],  	//labels on the graph legend
+          labelsDiv: document.getElementById('graphCPU_legend'),//the legend is inside its own <div> tags
+          labelsSeparateLines: true,                       	//put each label in the legend on a separate line
+      }
+   );
+</script>
+<br><a href=arrdvark.hour.html> Hour</a>  &nbsp;
+    <a href=arrdvark.day.html>  Day</a>   &nbsp;
+    <a href=arrdvark.week.html> Week</a>  &nbsp;
+    <a href=arrdvark.month.html>Month</a> &nbsp;
+    <a href=arrdvark.year.html> Year</a>  &nbsp;
+
+
+
+<!-- generate a graph for physical CPU utilization -->
+<hr>
+<table border=0>
+   <tr><td><div id="graphCPUphysical">       </div>   <!-- div id values must be unique -->  
+       <td><div id="graphCPUphysical_legend"></div>   <!-- div id values must be unique -->
+   </tr>
+</table>
+<script type="text/javascript">
+   g2 = new Dygraph(
+      document.getElementById("graphCPUphysical"),
+      "cpuphysical-day.csv", 					// path to CSV file
+      {   							//graph options
+          title: "Physical CPU Consumption",
+          ylabel: 'Physical CPU',
+          xlabel: "x-axis label",
+          width:800,       
+          height:300,    
+          colors:["red","green"],                    
+          stackedGraph: false,
+          rollPeriod: 1,
+          //
+          // convert UNIX timestamp (seconds since epoch)
+          // to milliseconds since epoch (date format used by dygraphs)
+          xValueFormatter: Dygraph.dateString_,
+          xValueParser: function(x) { return 1000*parseInt(x); },
+          xTicker: Dygraph.dateTicker,
+          //
+          // Legend details
+          legend: "always",                                //always display the legend
+          //labelsKMG: true,                                 //add KMG (base 10) to numbers
+          //labelsKMG2: true,                              //add KMB (base 2)  to numbers
+          labels:["date","Physical CPU","Entitled CPU"],   //labels on the graph legend
+          labelsDiv: document.getElementById('graphCPUphysical_legend'),    //the legend is inside its own <div> tags
+          labelsSeparateLines: true,                       //put each label in the legend on a separate line
+      }
+   );
+</script>
+
+
+
+<!-- generate a graph for memory utilization -->
+<hr>
+<table border=0>
+   <tr><td><div id="graphMemory">       </div>   <!-- div id values must be unique -->
+       <td><div id="graphMemory_legend"></div>   <!-- div id values must be unique -->
+   </tr>
+</table>
+<script type="text/javascript">
+   g2 = new Dygraph(
+      document.getElementById("graphMemory"),
+      "memory-day.csv", // path to CSV file
+      {   							// options
+          title: "Memory Utilization",
+          ylabel: 'Memory',
+          xlabel: "x-axis label",
+          width:800,       
+          height:300,       
+          stackedGraph: true,
+          colors:["green","blue","red"],
+          rollPeriod: 1,
+          //
+          // convert UNIX timestamp (seconds since epoch)
+          // to milliseconds since epoch (date format used by dygraphs)
+          xValueFormatter: Dygraph.dateString_,
+          xValueParser: function(x) { return 1000*parseInt(x); },
+          xTicker: Dygraph.dateTicker,
+          //
+          // Legend details
+          legend: "always",                                //always display the legend
+          //labelsKMG:false,                              //add KMG (base 10) to numbers
+          labelsKMG2:true,                                //add KMB (base 2)  to numbers
+          labels:["date","MemoryFree","FilesystemCache","MemoryUsed"],   //labels on the graph legend
+          labelsDiv: document.getElementById('graphMemory_legend'),    //the legend is inside its own <div> tags
+          labelsSeparateLines:true,                       //put each label in the legend on a separate line
+      }
+   );
+</script>
+
+
+
+<!-- generate a graph for paging space consumption -->
+<hr>
+<table border=0>
+   <tr><td><div id="graphPagingUtil">       </div>   <!-- div id values must be unique -->
+       <td><div id="graphPagingUtil_legend"></div>   <!-- div id values must be unique -->
+   </tr>
+</table>
+<script type="text/javascript">
+   g2 = new Dygraph(
+      document.getElementById("graphPagingUtil"),
+      "pagingspace-day.csv", 					//path to CSV file
+      {   							//graph options
+          title: "Paging Space Utilization",
+          ylabel: 'Paging Space',
+          xlabel: "x-axis label",
+          width:800,       
+          height:300,       
+          stackedGraph: false,
+          colors:["green","red"],
+          rollPeriod: 1,
+          //
+          // convert UNIX timestamp (seconds since epoch)
+          // to milliseconds since epoch (date format used by dygraphs)
+          xValueFormatter: Dygraph.dateString_,
+          xValueParser: function(x) { return 1000*parseInt(x); },
+          xTicker: Dygraph.dateTicker,
+          //
+          // Legend details
+          legend: "always",                                //always display the legend
+          //labelsKMG: false,                              //add KMG (base 10) to numbers
+          labelsKMG2: true,                                //add KMB (base 2)  to numbers
+          labels:["date","Total","Used"],                  //labels on the graph legend
+          labelsDiv: document.getElementById('graphPagingUtil_legend'),    //the legend is inside its own <div> tags
+          labelsSeparateLines: true,                       //put each label in the legend on a separate line
+      }
+   );
+</script>
+
+
+
+<!-- generate a graph for paging in/out activity -->
+<hr>
+<table border=0>
+   <tr><td><div id="graphPagingInOut">       </div>   <!-- div id values must be unique -->
+       <td><div id="graphPagingInOut_legend"></div>   <!-- div id values must be unique -->
+   </tr>
+</table>
+<div id="graphPagingInOut"></div>
+<script type="text/javascript">
+   g2 = new Dygraph(
+      document.getElementById("graphPagingInOut"),
+      "paginginout-day.csv", 					// path to CSV file
+      {   							//graph options
+          title: "Paging In/Out Activity",
+          ylabel: 'Paging Activity (bytes)',
+          xlabel: "x-axis label",
+          width:800,       
+          height:300,       
+          stackedGraph: false,
+          colors:["blue","orange"],
+          rollPeriod: 1,
+          //
+          // convert UNIX timestamp (seconds since epoch)
+          // to milliseconds since epoch (date format used by dygraphs)
+          xValueFormatter: Dygraph.dateString_,
+          xValueParser: function(x) { return 1000*parseInt(x); }, 
+          xTicker: Dygraph.dateTicker,
+          //
+          // Legend details
+          legend: "always",                                //always display the legend
+          //labelsKMG: false,                              //add KMG (base 10) to numbers
+          labelsKMG2: true,                                //add KMB (base 2)  to numbers
+          labels:["date","Out","In"],                      //labels on the graph legend
+          labelsDiv: document.getElementById('graphPagingInOut_legend'),    //the legend is inside its own <div> tags
+          labelsSeparateLines: true,                       //put each label in the legend on a separate line
+      }
+   );
+</script>
+
+
+<!-- put a footer on the page -->
+<p>&nbsp;
+<p>&nbsp;
+<p><center><a href=http://www.arrdvark.net><font size=-3 color=grey> ARRDVARK - Aix Round Robin Database Visualization And Reporting Kit </a></font>
+
+</body>
+</html>
